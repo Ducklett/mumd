@@ -9,7 +9,10 @@
 #endif
 
 typedef enum {
-	md_text, md_code, md_bold, md_italics,
+	md_text,
+	md_code_start, md_code_end,
+	md_bold_start, md_bold_end,
+	md_italics_start, md_italics_end,
 
 	md_link_start, md_link_end,
 	md_image_start, md_image_end,
@@ -46,13 +49,6 @@ void mumd_parse(const char *md, int length, void (*cb)(const md_node node));
 
 #ifdef MUMD_IMPLEMENTATION
 
-typedef enum {
-	md_context_code,
-	md_context_italics,
-	md_context_bold,
-	md_context_bare,
-} md_internal_inline_context;
-
 typedef struct {
 	md_type type;
 	int spaces;
@@ -63,155 +59,10 @@ typedef struct {
 	int length;
 	void (*cb)(const md_node node);
 	int i;
-	md_internal_inline_context inline_context;
 	int indent_level;
-	md_internal_inline_context style_stack[MUMD_MAX_NESTED_INLINE_STYLE];
+	md_type style_stack[MUMD_MAX_NESTED_INLINE_STYLE];
 	md_internal_indent indent_stack[MUMD_MAX_NESTED_LISTS];
 } md_internal_state;
-
-static inline void mumd_internal_change_inline_context(
-	md_internal_state *state, int *context_start, int delim_length,
-	md_type from, md_internal_inline_context to) {
-
-	int context_end = state->i;
-	state->cb((md_node){
-		.type = from,
-		.text = (char *)state->md + *context_start,
-		.length = context_end - *context_start});
-	state->inline_context=to;
-	state->i+=delim_length;
-	*context_start=state->i;
-}
-
-static inline int mumd_internal_parse_link(md_internal_state *state,
-	int *linkStart, int *linkLength, int *titleStart, int *titleLength) {
-
-	if (state->i>=state->length || state->md[state->i] != '[') return 0;
-
-	*titleStart=state->i+1;
-	*titleLength=0;
-
-
-	while(*titleStart + *titleLength < state->length && state->md[*titleStart + *titleLength] != ']') (*titleLength)++;
-
-	if (*titleStart + *titleLength + 1 >= state->length || state->md[*titleStart + *titleLength] != ']' || state->md[*titleStart + *titleLength + 1] != '(') return 0;
-
-	*linkStart = *titleStart + *titleLength + 2;
-	*linkLength = 0;
-	while(*linkStart + *linkLength < state->length && state->md[*linkStart + *linkLength] != ')') (*linkLength)++;
-
-	if (state->md[*linkStart + *linkLength] != ')') return 0;
-
-	return 1;
-}
-
-static inline void
-mumd_internal_parse_to_end_of_line(md_internal_state *state) {
-	int titleStart, titleLength, linkStart, linkLength;
-
-	int context_start = state->i;
-	while (state->i < state->length &&
-		   state->md[state->i] != '\r' && state->md[state->i] != '\n') {
-
-		char c = state->md[state->i];
-
-		switch (state->inline_context)
-		{
-
-			case md_context_bare: {
-				if (c == '[') {
-					int validLink = mumd_internal_parse_link(state, &linkStart, &linkLength, &titleStart, &titleLength);
-					if (validLink) {
-						// commit text before the link
-						mumd_internal_change_inline_context(state, &context_start, 0, md_text, md_context_bare);
-						state->i = linkStart + linkLength + 1;
-						state->cb((md_node){ .type = md_link_start, .text = (char *)state->md + linkStart, .length = linkLength});
-						state->cb((md_node){ .type = md_link_end, .text = (char *)state->md + titleStart, .length = titleLength});
-						context_start=state->i;
-					}
-				} else if (c=='!') {
-					state->i++;
-					int validImage = mumd_internal_parse_link(state, &linkStart, &linkLength, &titleStart, &titleLength);
-					if (validImage) {
-						// commit text before the image
-						state->i--;
-						mumd_internal_change_inline_context(state, &context_start, 0, md_text, md_context_bare);
-						state->i++;
-
-						state->i = linkStart + linkLength + 1;
-						state->cb((md_node){ .type = md_image_start, .text = (char *)state->md + titleStart, .length = titleLength});
-						state->cb((md_node){ .type = md_image_end, .text = (char *)state->md + linkStart, .length = linkLength});
-						context_start=state->i;
-					} else {
-						// no i++ since we just skip the !
-					}
-				} else 
-				if (c=='`') {
-					mumd_internal_change_inline_context(
-						state, &context_start, 1, md_text, md_context_code);
-				} else if (c == '*') {
-					if (state->i+1 < state->length &&
-						state->md[state->i+1] == '*') {
-						mumd_internal_change_inline_context(
-							state, &context_start, 2, md_text, md_context_bold);
-					} else {
-						mumd_internal_change_inline_context( state,
-							&context_start, 1, md_text, md_context_italics);
-					}
-				} else {
-					state->i++;
-				}
-			} break;
-
-			case md_context_code: {
-				if (c=='`') {
-					mumd_internal_change_inline_context(
-						state, &context_start, 1, md_code, md_context_bare);
-				} else {
-					state->i++;
-				}
-			}; break;
-
-			case md_context_italics: {
-				if (c=='*') {
-					mumd_internal_change_inline_context(
-						state, &context_start, 1, md_italics, md_context_bare);
-				} else {
-					state->i++;
-				}
-			}; break;
-
-			case md_context_bold: {
-				if (c=='*' && state->i+1 < state->length &&
-					state->md[state->i+1] == '*') {
-					mumd_internal_change_inline_context(state, &context_start,
-						2, md_bold, md_context_bare);
-				} else {
-					state->i++;
-				}
-			}; break;
-		}
-	}
-
-	state->inline_context=md_context_bare;
-	if (context_start != state->i) {
-		int context_end = state->i;
-
-		switch (state->inline_context)
-		{
-			case md_context_bold: { context_start -= 2;}; break;
-			case md_context_italics: { context_start -= 1;}; break;
-			case md_context_code: { context_start -= 1;}; break;
-		}
-
-		state->inline_context=md_context_bare;
-
-		state->cb((md_node){
-			.type = md_text,
-			.text = (char *)state->md + context_start,
-			.length = context_end - context_start});
-	}
-}
 
 static inline int mumd_internal_is_newline(char c) {
 	return c == '\n' || c == '\r';
@@ -223,6 +74,176 @@ static inline int mumd_internal_is_number(char c) {
 
 static inline int mumd_internal_is_whitespace(char c) {
 	return c == ' ' || c == '\t';
+}
+
+static inline int mumd_internal_parse_link(md_internal_state *state,
+	int *linkStart, int *linkLength, int *titleStart, int *titleLength) {
+
+	if (state->i>=state->length || state->md[state->i] != '[') return 0;
+
+	*titleStart=state->i+1;
+	*titleLength=0;
+
+
+	while(*titleStart + *titleLength < state->length && state->md[*titleStart + *titleLength] != ']' &&
+		!mumd_internal_is_newline(state->md[*titleStart + *titleLength])) (*titleLength)++;
+
+	if (*titleStart + *titleLength + 1 >= state->length ||
+		state->md[*titleStart + *titleLength] != ']' ||
+		state->md[*titleStart + *titleLength + 1] != '(') return 0;
+
+	*linkStart = *titleStart + *titleLength + 2;
+	*linkLength = 0;
+	while(*linkStart + *linkLength < state->length && state->md[*linkStart + *linkLength] != ')'
+		&& !mumd_internal_is_newline(state->md[*linkStart + *linkLength])) (*linkLength)++;
+
+	if (state->md[*linkStart + *linkLength] != ')') return 0;
+
+	return 1;
+}
+
+static inline void mumd_internal_pop_style(
+	md_internal_state *state, int *text_start, int delim_length, int *style_index) {
+
+	// commit text
+	int text_length = state->i - *text_start;
+	if (text_length>0) {
+		state->cb((md_node){
+			.type = md_text,
+			.text = (char *)state->md + *text_start,
+			.length = text_length});
+	}
+
+
+	// links and images may need to commit text that comes before them
+	// in this case 0 if passed for delim_length, and the style remains unterminated
+	if (delim_length) {
+		state->cb((md_node){ .type = state->style_stack[--(*style_index)] + 1 });
+		state->i+=delim_length;
+		*text_start = state->i;
+	}
+}
+
+// returns true if a delimiter is found on this line after `start`
+// if a character in the delimeter is set to \\0 it is treates as "any except *"
+// italics use "*\\0" since otherwise they would match on **
+static inline int
+mumd_internal_style_terminates(md_internal_state *state, int start, const char* delim, int delim_len) {
+	for(int j=start;j<state->length-delim_len && !mumd_internal_is_newline(state->md[j]); j++) {
+		int match = 1;
+		for (int k=0;k<delim_len;k++) {
+			if ((state->md[j+k] == delim[k] && delim[k] != 0) || (delim[k] == 0 && state->md[j+k] != '*')) {
+				match=0;
+				break;
+			}
+		}
+		if (match) return 1;
+	}
+	return 0;
+}
+
+static inline void mumd_internal_push_style(md_internal_state *state, md_type style, int *text_start, int *style_index, const char* delim, int delim_len) {
+
+	int terminates=mumd_internal_style_terminates(state, state->i+delim_len+1, delim, delim_len);
+
+	if (style == md_italics_start) delim_len=1;
+
+	if (terminates) {
+		// commit text
+		int text_end = state->i;
+		state->cb((md_node){
+			.type = md_text,
+			.text = (char *)state->md + *text_start,
+			.length = text_end - *text_start});
+
+		// italics use "*\0", but should only increate i by 1
+
+		// push style
+		state->style_stack[(*style_index)++] = style;
+		state->cb((md_node){ .type = style });
+		state->i+=delim_len;
+		*text_start=state->i;
+	} else {
+		state->i+=delim_len;
+	}
+}
+
+static inline void
+mumd_internal_parse_to_end_of_line(md_internal_state *state) {
+	int titleStart, titleLength, linkStart, linkLength;
+	int style_index=0;
+	int text_start=state->i;
+
+
+	while (state->i < state->length && !mumd_internal_is_newline(state->md[state->i])) {
+		char c1 = state->md[state->i];
+		char c2 = state->i+1 < state->length ? state->md[state->i+1] : 0;
+		// todo: only calculate when push/pop happens
+		md_type currentStyle = style_index ? state->style_stack[style_index-1] : md_text;
+
+		switch (currentStyle)
+		{
+			case md_bold_start: {
+				if (c1=='*' && c2 == '*') {
+					mumd_internal_pop_style(state, &text_start, 2, &style_index);
+					continue;
+				}
+			} break;
+			case md_italics_start: {
+				if (currentStyle == md_italics_start && c1=='*' && c2 != '*') {
+					mumd_internal_pop_style(state, &text_start, 1, &style_index);
+					continue;
+				}
+			} break;
+			case md_code_start: {
+				if (currentStyle == md_code_start && c1=='`') {
+					mumd_internal_pop_style(state, &text_start, 1, &style_index);
+					continue;
+				}
+
+			} break;
+		}
+
+		switch (c1)
+		{
+			case '*': {
+				if (c2 == '*') mumd_internal_push_style(state, md_bold_start, &text_start, &style_index, "**", 2);
+				else mumd_internal_push_style(state, md_italics_start, &text_start, &style_index, "*\0", 2);
+			} break;
+			case '`': mumd_internal_push_style(state, md_code_start, &text_start, &style_index, "`", 1); break;
+			case '!': {
+				// image
+				state->i++;
+				int validImage = mumd_internal_parse_link(state, &linkStart, &linkLength, &titleStart, &titleLength);
+				if (validImage) {
+					state->i--;
+					mumd_internal_pop_style(state, &text_start, 0, &style_index);
+					state->i++;
+
+					state->i = linkStart + linkLength + 1;
+					state->cb((md_node){ .type = md_image_start, .text = (char *)state->md + titleStart, .length = titleLength});
+					state->cb((md_node){ .type = md_image_end, .text = (char *)state->md + linkStart, .length = linkLength});
+					text_start=state->i;
+				} else { /* no i++ since we just skip the !*/ }
+			} break;
+			case '[': {
+				// link
+				int validLink = mumd_internal_parse_link(state, &linkStart, &linkLength, &titleStart, &titleLength);
+				if (validLink) {
+					mumd_internal_pop_style(state, &text_start, 0, &style_index);
+
+					state->i = linkStart + linkLength + 1;
+					state->cb((md_node){ .type = md_link_start, .text = (char *)state->md + linkStart, .length = linkLength});
+					state->cb((md_node){ .type = md_link_end, .text = (char *)state->md + titleStart, .length = titleLength});
+					text_start=state->i;
+				} else state->i++;
+			} break;
+			default: state->i++; break;
+		} // end switch
+	} // end while
+
+	// commit the last text block
+	mumd_internal_pop_style(state, &text_start, 0, &style_index);
 }
 
 int mumd_internal_match_list(md_internal_state *state) {
@@ -264,7 +285,6 @@ void mumd_parse(const char *md, int length, void (*cb)(const md_node node)) {
 		.length = length,
 		.cb = cb,
 		.i = 0,
-		.inline_context = md_context_bare,
 		.indent_level = 0
 	};
 
