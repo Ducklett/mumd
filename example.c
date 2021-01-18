@@ -14,6 +14,8 @@ void node_parsed(const md_node node) {
 		case md_bold_end:         printf("</strong>"); break;
 		case md_italics_start:    printf("<em>"); break;
 		case md_italics_end:      printf("</em>"); break;
+		case md_strikethrough_start: printf("<del>"); break;
+		case md_strikethrough_end:   printf("</del>"); break;
 
 		case md_link_start:       printf("<a href=\"%.*s\">", node.length, node.text); break;
 		case md_link_end:         printf("%.*s</a>\n", node.length, node.text); break;

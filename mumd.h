@@ -13,6 +13,7 @@ typedef enum {
 	md_code_start, md_code_end,
 	md_bold_start, md_bold_end,
 	md_italics_start, md_italics_end,
+	md_strikethrough_start, md_strikethrough_end,
 
 	md_link_start, md_link_end,
 	md_image_start, md_image_end,
@@ -37,7 +38,6 @@ typedef enum {
 
 typedef struct {
 	md_type type;
-	// todo: union with other kinds of params
 	char *text;
 	int length;
 } md_node;
@@ -146,6 +146,8 @@ static inline void mumd_internal_push_style(md_internal_state *state, md_type st
 
 	int terminates=mumd_internal_style_terminates(state, state->i+delim_len+1, delim, delim_len);
 
+
+	// italics use "*\0", but should only increate i by 1
 	if (style == md_italics_start) delim_len=1;
 
 	if (terminates) {
@@ -155,8 +157,6 @@ static inline void mumd_internal_push_style(md_internal_state *state, md_type st
 			.type = md_text,
 			.text = (char *)state->md + *text_start,
 			.length = text_end - *text_start});
-
-		// italics use "*\0", but should only increate i by 1
 
 		// push style
 		state->style_stack[(*style_index)++] = style;
@@ -190,17 +190,22 @@ mumd_internal_parse_to_end_of_line(md_internal_state *state) {
 				}
 			} break;
 			case md_italics_start: {
-				if (currentStyle == md_italics_start && c1=='*' && c2 != '*') {
+				if (c1=='*' && c2 != '*') {
 					mumd_internal_pop_style(state, &text_start, 1, &style_index);
 					continue;
 				}
 			} break;
 			case md_code_start: {
-				if (currentStyle == md_code_start && c1=='`') {
+				if (c1=='`') {
 					mumd_internal_pop_style(state, &text_start, 1, &style_index);
 					continue;
 				}
-
+			} break;
+			case md_strikethrough_start: {
+				if (c1=='~' && c2 == '~') {
+					mumd_internal_pop_style(state, &text_start, 2, &style_index);
+					continue;
+				}
 			} break;
 		}
 
@@ -211,6 +216,10 @@ mumd_internal_parse_to_end_of_line(md_internal_state *state) {
 				else mumd_internal_push_style(state, md_italics_start, &text_start, &style_index, "*\0", 2);
 			} break;
 			case '`': mumd_internal_push_style(state, md_code_start, &text_start, &style_index, "`", 1); break;
+			case '~': {
+				if (c2 == '~') mumd_internal_push_style(state, md_strikethrough_start, &text_start, &style_index, "~~", 2);
+				else state->i++;
+			} break;
 			case '!': {
 				// image
 				state->i++;
