@@ -53,37 +53,59 @@ void node_parsed(const md_node node) {
 	}
 }
 
+void help() {
+	fprintf(stderr, "usage: mumd <filename>\n");
+	fprintf(stderr, "-s\tread from stdin instead of file\n");
+	exit(1);
+}
+
 void main(int argc, const char** argv) {
 
-	if (argc<=1) {
-		fprintf(stderr, "usage: mumd <filename>\n");
-		fprintf(stderr, "alternatively pipe your input into stdin\n");
-		exit(1);
+	if (argc<=1) help();
+	if (strcmp(argv[1], "-s") == 0) {
+
+		char c;
+		size_t length = 0;
+		size_t capacity = sizeof(char) * 512;
+		char* buff = malloc(capacity);
+
+		while((c = getchar()) != EOF && c != '\0') {
+			buff[length++] = c;
+			if (length==capacity) {
+				char* oldBuff = buff;
+				buff = malloc(capacity*2);
+				memcpy(buff, oldBuff,capacity);
+				capacity*=2;
+				free(oldBuff);
+			}
+		}
+
+		if (length == 0) help();
+
+		mumd_parse(buff, length, node_parsed);
+	} else {
+		char * buff = 0;
+		long length;
+
+		FILE * f = fopen (argv[1], "rb");
+
+		if (f) {
+  			fseek (f, 0, SEEK_END);
+  			length = ftell (f);
+  			fseek (f, 0, SEEK_SET);
+  			buff = malloc (length);
+  			if (buff) {
+    			fread (buff, 1, length, f);
+  			}
+  			fclose (f);
+		}
+
+		if (!buff) {
+			fprintf(stderr, "failed to open file %s", argv[1]);
+			exit(1);
+		}
+
+		mumd_parse(buff, length, node_parsed);
 	}
 
-	char * buffer = 0;
-	long length;
-
-	FILE * f = fopen (argv[1], "rb");
-
-	if (f)
-	{
-  		fseek (f, 0, SEEK_END);
-  		length = ftell (f);
-  		fseek (f, 0, SEEK_SET);
-  		buffer = malloc (length);
-  		if (buffer)
-  		{
-    		fread (buffer, 1, length, f);
-  		}
-  		fclose (f);
-	}
-
-	if (!buffer)
-	{
-		fprintf(stderr, "failed to open file %s", argv[1]);
-		exit(1);
-	}
-
-	mumd_parse(buffer, length, node_parsed);
 }

@@ -288,10 +288,10 @@ void mumd_parse(const char *md, int length, void (*cb)(const md_node node)) {
 		.indent_level = 0
 	};
 
+	mumd_internal_parse_separator(&state);
+
 	while (state.i < length)
 	{
-		mumd_internal_parse_separator(&state);
-
 		int indentValue = 0;
 		while(1) {
 			if (md[state.i] == ' ') indentValue++;
@@ -521,8 +521,10 @@ md_paragraph_jump:
 
 			cb((md_node){ .type = md_paragraph_end  });
 		} break;
-		}
-	}
+		} // end switch
+
+		mumd_internal_parse_separator(&state);
+	} // end while
 }
 
 #endif // MUMD_IMPLEMENTATION
